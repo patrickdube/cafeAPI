@@ -11,7 +11,7 @@
                 ]
             },
             "the": {
-                "items": [
+                "items": [ 
                     { "id": 6, "nom": "Thé noir", "prix": 3.00, "disponible": true },
                     { "id": 7, "nom": "Thé vert",  "prix": 3.00, "disponible": true }
                 ]
