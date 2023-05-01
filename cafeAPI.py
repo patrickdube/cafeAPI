@@ -11,13 +11,29 @@
 
 # Déclaration des imports et dépendances
 # import requests
-import os
+
+from datetime import date
 import json
+import re
 
 # Déclaration des variables globales, constantes
+
 ACCOUNTS_PATH = "data\comptes.csv"
 ORDERS_PATH = "data\commandes.csv"
 MENU_PATH = "data\menu.json"
+
+# Public requests
+GET_ITEMS_REQUEST_BY_CATEGORY_REGEX = re.compile(r'GET /api/menu/\w*/items')
+GET_ITEMS_REQUEST_BY_ID_REGEX = re.compile(r'GET /api/menu/items/\w*')
+POST_ORDERS_REQUEST = re.compile(r'POST /api/commandes (\w+x\w+)')
+
+# Staff requests
+GET_ORDERS_BY_ID_REGEX = re.compile(r'GET /api/commandes/\w+')
+PUT_ITEMS_BY_ID_REGEX = re.compile(r'PUT /api/menu/items/\w+ disponible=\w+')
+
+# Admin requests
+GET_ACCOUNTS_BY_ID = re.compile(r'GET /api/comptes/\w+')
+PUT_ACTIVITY_BY_ID = re.compile(r'PUT /api/comptes/\w+')
 
 # Déclaration des fonctions internes et calculs
 # avec commentaires détaillés nécessaires seulement (optionnel)
@@ -37,23 +53,28 @@ def get_user_password():
 
 
 def get_menu_data():
-    with open(MENU_PATH, "rb") as data:
-        return json.load(data)
+    try:
+        with open(MENU_PATH, "rb") as data:
+            return json.load(data)
+    except:
+        print("Une erreur est survenue lors de l’ouverture du fichier.")
 
 
 def get_orders_data():
-    with open(ORDERS_PATH) as data:
-        content = data.read().splitlines()
+    try:
+        with open(ORDERS_PATH) as data:
+            content = data.read().splitlines()
+    except:
+        print("Une erreur est survenue lors de l’ouverture du fichier.")
 
     orders = []
     for order_unsplit in content:
         order_split = order_unsplit.split(" | ")
         items_bought = []
-        for item in order_split[2]:
-            items = item.split(", ")
-            for _ in items:
-                items = items.split("x")
-                items_bought.append(items)
+        order_split_split = order_split[2].split(", ")
+        for item in order_split_split:
+            items = item.split("x")
+            items_bought.append(items)
 
         current_order = {
             "id": order_split[0],
@@ -66,9 +87,13 @@ def get_orders_data():
 
     return orders
 
+
 def get_accounts_data():
-    with open(ACCOUNTS_PATH) as data:
-        content = data.read().splitlines()
+    try:
+        with open(ACCOUNTS_PATH) as data:
+            content = data.read().splitlines()
+    except:
+        print("Une erreur est survenue lors de l’ouverture du fichier.")
 
     accounts = []
     for account_unsplit in content:
@@ -86,85 +111,275 @@ def get_accounts_data():
 
     return accounts
 
+
 def verify_account(serial_number, password):
     accounts = get_accounts_data()
     for account in accounts:
-        if serial_number == account["serial_number"] and password == account["password"]:
-            return True
-    return False
+        if serial_number == account["serial_number"] and password == account["password"] and int(account["activity"]) == 1:
+            user_role = account["role"]
+            return True, user_role
+    return False, None
+
 
 def authentification(user_serial_number=None, user_password=None):
     if user_serial_number == None:
         user_serial_number = get_user_serial_number()
     if user_password == None:
         user_password = get_user_password()
-    if verify_account(user_serial_number, user_password):
+
+    account_validity, user_role = verify_account(
+        user_serial_number, user_password)
+
+    if account_validity:
         print(f"Connecté en tant que {user_serial_number}.")
-        return True
-    return False
-
-def request_items():
-    menu = get_menu_data()
-
-    # sortir tous les ids possibles (any category)
-    for category_ in menu:
-        for sub_category_ in menu[category_]:
-            for sub_sub_category_ in menu[category_][sub_category_]:
-                sub_sub_category = menu[category_][sub_category_][sub_sub_category_]
-                if type(sub_sub_category) is list:
-                    for i in range(len(sub_sub_category)):
-                        id_ = sub_sub_category[i].get("id")
-                        names = sub_sub_category[i].get("nom")
-                        print(id_, names)
-
-                for sub_sub_sub_category_ in sub_sub_category:
-                    sub_sub_sub_category = menu[category_][sub_category_][sub_sub_category_][sub_sub_sub_category_]
-                    if type(sub_sub_sub_category) is list:
-                        for i in range(len(sub_sub_sub_category)):
-                            id_ = sub_sub_sub_category[i].get("id")
-                            names = sub_sub_sub_category[i].get("nom")
-                            print(id_, names)
+        return True, user_serial_number, user_role
+    return False, None, None
 
 
-def request_category_items(category):
+def get_all_items(menu=get_menu_data()):
+    items = []
+    for value in menu.values():
+        if isinstance(value, list):
+            for i in value:
+                items.append(i)
+        else:
+            items.extend(get_all_items(value))
+    return items
+
+
+def print_items(items):
+    for item in items:
+        item_id = item['id']
+        item_name = item['nom']
+        print(item_id, item_name)
+
+
+def request_items(item_id=None, category=None, menu=get_menu_data()):
+    if item_id is None and isinstance(menu, dict):
+        for key, value in menu.items():
+            if category is None:
+                print_items(get_all_items())
+            elif key == category:
+                print_items(get_all_items(value))
+                break
+            else:
+                request_items(category=category, menu=value)
+    else:
+        for item in get_all_items():
+            if item['id'] == item_id:
+                item_name = item['nom']
+                item_price = item['prix']
+                item_availability = item['disponible']
+                print(
+                    f'nom: {item_name}\nprix: {item_price}\ndispo: {item_availability}')
+                break
+
+
+def request_orders(user_role, order_id_=None):
+    if user_role.strip() in ["staff", "admin"]:
+
+        orders = get_orders_data()
+        all_items = get_all_items()
+
+        if order_id_ is None:
+            for order in orders:
+                order_id = order['id']
+                order_date = order['purchase_date']
+                order_total = order['price_total']
+                print(
+                    f'id: {order_id} | date achat: {order_date} | prix total: {order_total}$')
+        else:
+            order_items = ""
+            for order in orders:
+                if order['id'].strip() == order_id_:
+                    order_date = order['purchase_date']
+                    order_total = order['price_total'].strip()
+                    for i, item_bought in enumerate(order['items_bought']):
+                        for item in all_items:
+                            if item['id'] == int(item_bought[0]):
+                                if i == len(order['items_bought'])-1:
+                                    order_items += item['nom'] + \
+                                        " x" + item_bought[1]
+                                else:
+                                    order_items += item['nom'] + \
+                                        " x" + item_bought[1] + ", "
+                                break
+                    print(
+                        f'items: {order_items} | date achat: {order_date} | prix total: {order_total}$')
+                break
+    else:
+        print("Vous n'avez pas les droits pour cette requête.")
+
+
+def post_orders(items_, user_serial_number):
+    orders = get_orders_data()
+    all_items = get_all_items()
+
+    with open(ORDERS_PATH, "a") as file:
+
+        items = ""
+        total_price = 0
+        for i, item in enumerate(items_):
+            item_split = item.split("x")
+            item_id = item_split[0]
+            item_quantity = item_split[1]
+            for item_2 in all_items:
+                if item_2['id'] == int(item_id):
+                    total_price += int(item_quantity) * item_2['prix']
+                    break
+            if i == len(items_)-1:
+                items += item
+            else:
+                items = item + ", "
+        last_order_id = orders[-1]['id']
+
+        formatted_total_price = "{:.2f}".format(round(total_price, 2))
+
+        try:
+            file.write(
+                f"\n{int((last_order_id).strip())+1}  | {user_serial_number} | {items} | {date.today()} | {formatted_total_price}")
+        except:
+            print("Une erreur est survenue lors de la modification du fichier.")
+
+
+def update_item(user_role, item_id, dispo):
+    if user_role in ["staff", "admin"]:
+
+        all_items = get_all_items()
+
+        for item in all_items:
+            if int(item_id) == item['id']:
+
+                if int(dispo) == 1:
+                    item['disponible'] = True
+                if int(dispo) == 0:
+                    item['disponible'] = False
+
+                break
+    else:
+        print("Vous n'avez pas les droits pour cette requête.")
+
+
+def request_accounts(user_role, user_id=None):
+    if user_role.strip() == "admin":
+
+        accounts = get_accounts_data()
+
+        for account in accounts:
+
+            account_serial_number = account['serial_number'].strip()
+            account_second_name = account['second_name'].strip()
+            account_first_name = account['first_name'].strip()
+            account_password = account['password'].strip()
+            account_email = account['email'].strip()
+            account_role = account['role'].strip()
+            account_activity = account['activity'].strip()
+
+            if user_id is None:
+
+                print(f"matricule: {account_serial_number} | nom: {account_second_name} | prénom: {account_first_name} | password: {account_password} | email: {account_email} | role: {account_role} | activité: {account_activity}")
+
+            elif user_id == account_serial_number:
+
+                print(f"matricule: {account_serial_number} | nom: {account_second_name} | prénom: {account_first_name} | password: {account_password} | email: {account_email} | role: {account_role} | activité: {account_activity}")
+
+                break
+
+    else:
+        print("Vous n'avez pas les droits administrateurs.")
+
+
+def type_request(request):
+    if GET_ITEMS_REQUEST_BY_CATEGORY_REGEX.search(request) is not None:
+        return "get_items_by_category"
+    if GET_ITEMS_REQUEST_BY_ID_REGEX.search(request) is not None:
+        return "get_items_by_id"
+    if POST_ORDERS_REQUEST.search(request) is not None:
+        return "post_orders"
+    if GET_ORDERS_BY_ID_REGEX.search(request) is not None:
+        return "get_orders_by_id"
+    if PUT_ITEMS_BY_ID_REGEX.search(request) is not None:
+        return "put_items_by_id"
+    if GET_ACCOUNTS_BY_ID.search(request) is not None:
+        return "get_accounts_by_id"
+    if PUT_ACTIVITY_BY_ID.search(request) is not None:
+        return "put_activity_by_id"
+    if request == "FIN":
+        return "FIN"
+    if request == "GET /api/commandes":
+        return "get_orders"
+    if request == "GET /api/menu/items":
+        return "get_items"
+    if request == "GET /api/comptes":
+        return "get_accounts"
+    else:
+        return "invalid"
+
+
+def tests():
     pass
 
 
 def main():
-    authenticated = authentification("20130405", "yaPass_01")
+    authenticated, user_serial_number, user_role = authentification(
+        "20250710", "rlPass_30")
 
     while authenticated:
         request = input()
         request_split = request.split("/")
 
-        # if request_split[3] in
+        match type_request(request):
 
-        match request:
-            case "GET /api/menu/items":
+            # ADMIN REQUESTS
+            case "get_accounts":
+                request_accounts(user_role=user_role)
+
+            case "get_accounts_by_id":
+                request_accounts(user_role, request_split[3])
+
+            case "put_activity_by_id":
+                print("put_activity_by_id")
+
+            # STAFF REQUESTS
+            case "get_orders":
+                request_orders(user_role)
+
+            case "get_orders_by_id":
+                request_orders(user_role, request_split[3])
+
+            case "put_items_by_id":
+                id_and_dispo = request_split[4].split(" ")
+                item_id = id_and_dispo[0]
+                dispo = id_and_dispo[1].split("=")[1]
+                update_item(user_role, item_id, dispo)
+
+            # STANDARD REQUESTS
+            case "get_items":
                 request_items()
+
+            case "get_items_by_category":
+                request_items(category=request_split[3])
+
+            case "get_items_by_id":
+                request_items(item_id=int(request_split[4]))
+
+            case "post_orders":
+                items_and_quantities = request_split[2].split(" ")[1:]
+                post_orders(items_and_quantities, user_serial_number)
 
             case "FIN":
                 authenticated = False
 
-            case _:
+            case "invalid":
                 print("Not a valid request.")
 
 
-# def request_
 # Déclaration du code principal et Affichage
+
 main()
 
 #################################################################################
 # Tests (optionnel)
 #################################################################################
 
-# request = input()
-# request_parts = request.split()
-# command = request_parts[0]
-# if command == "MENU":
-#     if len(request_parts) > 1:
-#         category = request_parts[1]
-#         call = request_items(category)
-#     else:
-#         call = request_items()
-#     print(call)
+tests()
